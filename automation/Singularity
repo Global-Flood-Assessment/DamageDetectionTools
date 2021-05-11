@@ -1,0 +1,22 @@
+BootStrap: docker
+from: continuumio/conda-ci-linux-64-python3.8
+
+%labels
+  Author Eric Coulter, Indiana University CIRC 
+  version  0.1
+
+%post
+  git clone https://github.com/Global-Flood-Assessment/DamageDetectionTools /opt/DamageDetectionTools
+  /opt/conda/bin/conda env update -f /opt/DamageDetectionTools/automation/environment.yml
+
+%runscript
+  echo "Running the Damage Detection tool!"
+  exec python /opt/DamageDetectionTools/automation/automation.py "$@"
+
+
+%help
+This contains the floodwater Damage Detection tool from 
+https://github.com/Global-Flood-Assessment/DamageDetectionTools 
+in /opt/DamageDetectionTools, and runs the tool by default. Run with --help
+or see the README at /opt/DamageDetectionTools/automation/README.md for more
+arguments.
