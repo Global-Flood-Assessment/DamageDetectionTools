@@ -1,0 +1,13 @@
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 2
+
+module load singularity
+
+#Note, since we are using Singularity, there is no need to mount
+#  any data directory. It may be worth using the -d WORKDIR flag in
+#  a real HPC env with requirements around filesystem useage.
+#  This command also assumes that the Singularity recipe has been built 
+#  into a 'ddt.sif' container image in the current directory, via
+#  `singularity build ddt.sif Singularity`
+singularity run ddt.sif -g testdata/20210509_one.geojson -s 20210501 -e 20210509 -n test_2
