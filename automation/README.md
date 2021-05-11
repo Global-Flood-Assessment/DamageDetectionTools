@@ -34,6 +34,8 @@ S2B_MSIL2A_20210508T002709_N0300_R016_T54HYG_20210508T020135.tif
 S2B_MSIL2A_20210508T002709_N0300_R016_T54HXG_20210508T020135.zip
 S2B_MSIL2A_20210508T002709_N0300_R016_T54HYG_20210508T020135.zip
 ```
+3.9GB in total
+
 **testing environments:**  
 Install [Miniconda Python 3.8](https://docs.conda.io/en/latest/miniconda.html)      
 Run ```conda env create -f environment.yml``` to install all neccesary packages
