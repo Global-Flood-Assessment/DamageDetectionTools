@@ -64,10 +64,10 @@ def run_workflow(paras):
     os.chdir(wkdir)
 
     # get footprint
-    footprint = get_footprint()
+    footprint_geojson = get_footprint()
 
     # step 3: download image data
-    cutted_tif = download_imagedata(footprint_geojson,"20210501","20210509")
+    cutted_tif = download_imagedata(footprint_geojson,paras.start, paras.end)
     
     # step 4: classification
     classified_img = classification(cutted_tif)
