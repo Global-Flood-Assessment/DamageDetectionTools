@@ -7,7 +7,7 @@ import geopandas as gpd
 import datetime
 import cv2
 import numpy as np
-from . import s2_classification
+from code import s2_classification 
 import zipfile
 import tempfile
 import os
@@ -66,13 +66,12 @@ for row in s.itertuples():
     pre_end = datetime.datetime.strptime(pre_date,"%Y%m%d")
     n_days_before = pre_end - datetime.timedelta(days=5)
     dc_start = n_days_before.strftime("%Y%m%d")
-    geojson = gpd.read_file('https://js-157-200.jetstream-cloud.org/ModelofModels\\
-    /gis_output/flood_warning_'+post_date+'.geojson')
+    geojson = gpd.read_file('https://js-157-200.jetstream-cloud.org/ModelofModels/gis_output/flood_warning_'+post_date+'.geojson')
     geojson = geojson.loc[geojson['pfaf_id'] == pid,'geometry']
     json = geojson.iloc[0]
     a = json.convex_hull
     response = requests.get('https://js-157-200.jetstream-cloud.org/ModelofModels/gis_output/flood_warning_'+post_date+'.zip')
-     _tmp_file = tempfile.TemporaryFile()
+    _tmp_file = tempfile.TemporaryFile()
     _tmp_file.write(response.content)
     zf = zipfile.ZipFile(_tmp_file, mode='r')
     if os.path.exists('../zip'):

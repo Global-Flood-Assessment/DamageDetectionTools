@@ -10,7 +10,7 @@ import os, shutil
 from glob import glob
 import xml.dom.minidom
 from sentinelsat import SentinelAPI, read_geojson, geojson_to_wkt
-from gdalconst import *
+from osgeo.gdalconst import *
 from geopandas import *
 import rasterio as rio
 import rasterio.mask
@@ -22,6 +22,9 @@ import matplotlib.image as mpimg
 from osgeo import ogr
 import subprocess
 from collections import Counter
+from sklearn.neighbors import KNeighborsClassifier
+import joblib
+from sklearn.ensemble import RandomForestClassifier
 
 def get_extent(fn):
     ds = gdal.Open(fn)
@@ -79,9 +82,8 @@ def get_ndvi(data):
     band4 = data[0]
     molecule = band8 - band4
     denominator = band8 + band4
-    band = molecule / denominator
-    band[band > 1] = -999
-    band[band < -1] = -999
+    flag = 1-np.where(denominator==0,0,1)
+    band = flag*(molecule / (denominator+1e-6))
     return band
 
 def get_ndwi(data):
@@ -89,73 +91,50 @@ def get_ndwi(data):
     band3 = data[1]
     molecule = band8 - band3
     denominator = band8 + band3
-    band = molecule / denominator
-    band[band > 1] = -999
-    band[band < -1] = -999
+    flag = np.where(denominator==0,0,1)
+    band = flag*(molecule / (denominator+1e-6))
     return band
-
+# create_model('mom_track3')
+# PATH = 'mom_track3'
 # create MD model based on sample tiff file
-def create_model():
-    sample_path = '../example/S2A_MSIL1C_20200608T161911_N0209_R040_T16PBA_20200608T195512_MDClass.tif'
+def create_model(PATH):
+    knn = KNeighborsClassifier(n_neighbors=1)
+    rf = RandomForestClassifier()
+    sample_path = PATH+'/example/S2A_MSIL1C_20200608T161911_N0209_R040_T16PBA_20200608T195512_MDClass.tif'
     sample_db = gdal.Open(sample_path)
     class_count = 6
     sp_proj,sp_geotrans,sp_data = read_img(sample_db)
-    X=[[] for j in range(class_count)]
-    for y in range(0, 10980):
-        for x in range(0, 10980):
-            i=0
-            while i < class_count:
-                if int(sp_data[0][y][x])==i:
-                    X[i].append([y,x])
-                i=i+1
-    sample_im_path = '../example/S2A_MSIL1C_20200608T161911_N0209_R040_T16PBA_20200608T195512.tif'
+    Y = sp_data[0,:,:].flatten()
+    sample_im_path = PATH+'/example/S2A_MSIL1C_20200608T161911_N0209_R040_T16PBA_20200608T195512.tif'
     sample_im_db = gdal.Open(sample_im_path)
     sp_im_proj,sp_im_geotrans,sp_im_data = read_img(sample_im_db)
     ndvi = get_ndvi(sp_im_data)
     ndwi = get_ndwi(sp_im_data)
     sp_img_data = np.zeros((6,10980,10980))
-    model_file = open('../saved_model/MD_model.txt','w')
     for i in range(4) :
         temp = np.max(sp_im_data[i])
         sp_img_data[i,:,:] = sp_im_data[i]/temp
     sp_img_data[4,:,:] = ndvi
     sp_img_data[5,:,:] = ndwi
-    input_data = sp_img_data
-    model = []
-    avg=np.zeros((class_count,6))
-    for i in range(class_count):
-        for j in range(len(X[i])):
-            y=X[i][j][0]
-            x=X[i][j][1]
-            avg[i,:] = avg[i,:] + input_data[:,y,x]
-        avg_sum=avg[i,:]/len(X[i])
-        model.append(avg_sum)
-        model_file.write(str(avg_sum)+'\n')
-    model_file.close()
-    return model
+    X = sp_img_data.transpose((1,2,0))
+    X = X.reshape((10980*10980,6))
+    knn.fit(X,Y)
+    rf.fit(X,Y)
+    joblib.dump(knn, PATH+'/saved_model/MD.model')
+    joblib.dump(rf, PATH+'/saved_model/RF.model')
+    return knn
 
 def load_model(path):
-    model_file = open(path,'r')
-    model = []
-    for line in model_file:
-        a = line.strip('\n').strip('[').strip(']').split(' ')
-        print(a)
-        model.append(list(map(float,line.strip('\n').strip('[').strip(']').split(' '))))
-    print(model)
+    model = joblib.load(path)
     return model
 
 # detect
 def cal_box_new(model,data):
     channel, height, width = data.shape
-    ans_pic = []
-    for k in range(len(model)):
-        flag = model[k]
-        flag_map = np.tile(flag,(height,width,1))
-        flag_map = flag_map.transpose((2,0,1))
-        differ = np.sqrt(sum(np.power((data - flag_map), 2)))
-        ans_pic.append(differ)
-    ans_pic = np.asarray(ans_pic)
-    ans=np.argmin(ans_pic,axis=0)
+    X = data.transpose((1,2,0))
+    X = X.reshape((height*width,channel))
+    prediction= model.predict(X)
+    ans = prediction.reshape((height, width))
     return ans
 
 def write_img(filename,im_proj,im_geotrans,im_data):
@@ -186,9 +165,13 @@ def write_img(filename,im_proj,im_geotrans,im_data):
                 dataset.GetRasterBand(i+1).WriteArray(im_data[i])
         del dataset
 
-def classification(footprint,o_footprint,start,end):
+start = '20220826'
+end = '20220831'
+footprint=a
+
+def classification(footprint,start,end):
     # setup API and login info
-    api =SentinelAPI('mom_sentinel2', 'sentinel2Download!','https://scihub.copernicus.eu/apihub/')
+    api =SentinelAPI('mom_sentinel2', 'sentinel2Download!','https://apihub.copernicus.eu/apihub')
     # search data with some limits like range of date and cloud cover using given footprint.
     products =api.query(footprint,date=(start,end), platformname='Sentinel-2', producttype = 'S2MSI2A', cloudcoverpercentage=(0,30))
     product_name = []
@@ -196,12 +179,22 @@ def classification(footprint,o_footprint,start,end):
     # download searched data to local
     for product in products:
         product_info = api.get_product_odata(product)
-        product_name.append(product_info['title'])
-        api.download(product)
+        is_online = product_info['Online']
+        if is_online:
+            print('Product' + product+ ' is online. Starting download.')
+            #api.download(product)
+            product_name.append(product_info['title'])
+        else:
+            print('Product' + product + ' is not online.')
+            api.trigger_offline_retrieval(product)
     product_name.reverse()
+    if len(product_name) == 0:
+        return "Sorry, now there is no avaliable data."
     # use terminal quary to translate B2, B3, B4, and B8 as one multiple tif file.
+    
+    len(product_name)
     for file_name in product_name:
-        quary = 'gdal_pansharpen.py -h'
+        quary = 'gdalinfo '+file_name+'.zip'
         info = os.popen(quary)
         d = info.read()
         d = d.split('SUBDATASET_1_NAME=')
@@ -209,7 +202,7 @@ def classification(footprint,o_footprint,start,end):
         q = 'gdal_translate ' + d[0] + ' '+file_name+'.tif'
         info = os.popen(q)
         d = info.read()
-
+        os.rm(file_name+'.zip')
     minX, maxY, maxX, minY = get_extent(product_name[0])
     if len(product_name)> 1:
         for fn in product_name[1:]:
@@ -218,20 +211,16 @@ def classification(footprint,o_footprint,start,end):
             maxY = max(maxY, maxy)
             maxX = max(maxX, maxx)
             minY = min(minY, miny)
-
     in_ds = gdal.Open(product_name[0])
     gt = in_ds.GetGeoTransform()
     rows = int(int(maxX - minX) / abs(gt[5]))
     cols = int(int(maxY - minY) / gt[1])
-
     driver = gdal.GetDriverByName("GTiff")
     out_ds = driver.Create('union.tif', rows, cols, 4, gdal.GDT_Byte)
     out_ds.SetProjection(in_ds.GetProjection())
-
     gt = list(in_ds.GetGeoTransform())
     gt[0], gt[3] = minX, maxY
     out_ds.SetGeoTransform(gt)
-
     for fn in product_name:
         in_ds = gdal.Open(fn)
         trans = gdal.Transformer(in_ds, out_ds, [])
@@ -239,15 +228,13 @@ def classification(footprint,o_footprint,start,end):
         x, y, z = map(int, xyz)
         data = in_ds.GetRasterBand(1).ReadAsArray()
         for i in range(4):
-        out_ds.GetRasterBand(i+1).WriteArray(data[i],x,y)
+            out_ds.GetRasterBand(i+1).WriteArray(data[i],x,y)
     del in_ds, out_band, out_ds
-
-    src_path = date+'union.tif'
+    src_path = 'union.tif'
     src = rio.open(src_path)
-    shpdata = GeoDataFrame.from_file('../shapefile/Polygon.shp')
+    shpdata = GeoDataFrame.from_file(PATH+'/shapefile/Polygon.shp')
     out_shpdata = shpdata.copy()
     shpdata=shpdata.to_crs(src.crs)
-
     features = shpdata.geometry[0].__geo_interface__
     out_image, out_transform = rio.mask.mask(src, [features], crop=True, nodata=src.nodata)
     out_meta = src.meta.copy()
@@ -255,13 +242,15 @@ def classification(footprint,o_footprint,start,end):
                      "height": out_image.shape[1],
                      "width": out_image.shape[2],
                      "transform": out_transform})
-    band_mask = rasterio.open('../geo_tiff/'+date+'cutted.tif', "w", **out_meta)
+    band_mask = rasterio.open(PATH+'/geo_tiff/'+date+'cutted.tif', "w", **out_meta)
     band_mask.write(out_image)
     #model = create_model()
-    model = load_model('../saved_model/MD_model.txt')
+    model = load_model(PATH+'/saved_model/MD_model.txt')
 
     # calculate NDVI & MDWI band for each file
-    dataset=gdal.Open('../geo_tiff/'date+'cutted.tif')
+    os.rm('union.tif')
+    dataset=gdal.Open(PATH+'/geo_tiff/'+date+'cutted.tif')
+    #dataset=gdal.Open('geo_tiff/geo_tiff/20210703.tif')
     im_proj,im_geotrans,im_data = read_img(dataset)
     ndvi = get_ndvi(im_data)
     ndwi = get_ndwi(im_data)
@@ -275,5 +264,7 @@ def classification(footprint,o_footprint,start,end):
     input_pic = new_data
     # detect and save result
     ans = cal_box_new(model,input_pic)
-    save_path = '../geo_tiff_test/'
-    write_img(date+'_class.tif',im_proj,im_geotrans,ans)
+
+    save_path = PATH+'/output/'
+    write_img(save_path+'final_output.tif',im_proj,im_geotrans,ans)
+    return "Prediction done."
